@@ -1,12 +1,17 @@
 use tauri::{Manager, menu::{Menu, MenuItem}, tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent}};
-use windows_sys::Win32::Foundation::{HWND};
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    SetWindowPos, HWND_BOTTOM, SWP_SHOWWINDOW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOMOVE
-};
 use sysinfo::{System, Networks};
 use serde::Serialize;
-use std::thread;
-use std::time::Duration;
+
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::{HWND, LPARAM, BOOL, TRUE, FALSE};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    SetWindowPos, HWND_BOTTOM, SWP_SHOWWINDOW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOMOVE,
+    GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+    FindWindowW, SendMessageTimeoutW, EnumWindows, SMTO_NORMAL, SetParent, FindWindowExW
+};
+#[cfg(target_os = "windows")]
+use std::ptr;
 
 #[derive(Serialize)]
 pub struct ProcessInfo {
@@ -30,7 +35,7 @@ fn get_system_stats() -> SystemStats {
     let mut sys = System::new_all();
     sys.refresh_all();
     
-    let cpu_usage = sys.global_cpu_usage();
+    let cpu_usage = sys.global_cpu_info().cpu_usage();
     let memory_used = sys.used_memory();
     let memory_total = sys.total_memory();
     
@@ -46,7 +51,7 @@ fn get_system_stats() -> SystemStats {
     let mut processes: Vec<ProcessInfo> = sys.processes()
         .values()
         .map(|p| ProcessInfo {
-            name: p.name().to_string_lossy().to_string(),
+            name: p.name().to_string(),
             cpu_usage: p.cpu_usage(),
             memory: p.memory(),
         })
@@ -70,12 +75,44 @@ fn set_clickthrough(window: tauri::Window, ignore: bool) {
     let _ = window.set_ignore_cursor_events(ignore);
 }
 
-// Aggressive function to force window to bottom
+#[tauri::command]
+fn set_widget_position(window: tauri::Window, x: i32, y: i32) {
+    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
+}
+
+
+#[cfg(target_os = "windows")]
+static mut WORKERW: HWND = 0;
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn enum_windows_proc(hwnd: HWND, _lparam: LPARAM) -> BOOL {
+    let p = FindWindowExW(hwnd, 0, windows_sys::core::w!("SHELLDLL_DefView"), ptr::null());
+    if p != 0 {
+        WORKERW = FindWindowExW(0, hwnd, windows_sys::core::w!("WorkerW"), ptr::null());
+    }
+    TRUE
+}
+
+// Aggressive function to force window to bottom desktop
+#[cfg(target_os = "windows")]
 pub fn force_bottom(hwnd: HWND) {
     unsafe {
-        SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOMOVE);
+        // We make it a tool window so it won't show up in Alt-Tab
+        let mut ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        ex_style |= WS_EX_TOOLWINDOW as i32;
+        SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style);
+
+        let progman = FindWindowW(windows_sys::core::w!("Progman"), ptr::null());
+        SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, ptr::null_mut());
+        EnumWindows(Some(enum_windows_proc), 0);
+        if WORKERW != 0 {
+            SetParent(hwnd, WORKERW);
+        } else {
+             SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOMOVE);
+        }
     }
 }
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -135,19 +172,19 @@ pub fn run() {
                 let _ = window.set_ignore_cursor_events(true);
                 
                 // CAST TO ISIZE to send between threads safely
+                // Only on windows for HWND
+                #[cfg(target_os = "windows")]
                 if let Ok(h_data) = window.hwnd() {
                     let hwnd_ptr = h_data.0 as isize;
-                    thread::spawn(move || {
-                        loop {
-                            force_bottom(hwnd_ptr as HWND);
-                            thread::sleep(Duration::from_millis(500));
-                        }
-                    });
+                    force_bottom(hwnd_ptr as HWND);
                 }
+
+                #[cfg(not(target_os = "windows"))]
+                let _ = window.set_always_on_bottom(true);
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_system_stats, set_clickthrough])
+        .invoke_handler(tauri::generate_handler![get_system_stats, set_clickthrough, set_widget_position])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
