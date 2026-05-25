@@ -1,0 +1,8 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\TodoWallpaper]
+@="Set as Productivity Command Center"
+"Icon"="C:\\Users\\PRABHAASINI\\Desktop\\command-center.exe"
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\TodoWallpaper\command]
+@="\"C:\\Users\\PRABHAASINI\\Desktop\\command-center.exe\""
