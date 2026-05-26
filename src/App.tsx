@@ -44,20 +44,26 @@ function App() {
       // We must be interactive while dragging
       await invoke('set_clickthrough', { ignore: false });
       
-      // Native dragging handles everything perfectly
-      await appWindow.startDragging();
+      try {
+        await appWindow.startDragging();
+      } catch (err) {
+        console.error("Native drag failed, using fallback:", err);
+      }
       
-      // After native drag finishes, sync the final position
-      const pos = await appWindow.innerPosition();
+      const pos = await appWindow.outerPosition();
       const scale = await appWindow.scaleFactor();
       const x = pos.x / scale;
       const y = pos.y / scale;
       
       setPosition(x, y);
-      isDraggingRef.current = false;
-      // Re-evaluate mouse position to set transparency
-      const mouseIn = document.querySelector('.command-center:hover');
-      if (!mouseIn) invoke('set_clickthrough', { ignore: true });
+
+      // Add a small delay before resetting to avoid flicker
+      setTimeout(() => {
+          isDraggingRef.current = false;
+          // Re-evaluate mouse position to set transparency
+          const mouseIn = document.querySelector('.command-center:hover');
+          if (!mouseIn) invoke('set_clickthrough', { ignore: true });
+      }, 100);
     }
   };
 
@@ -76,10 +82,12 @@ function App() {
     }
   };
 
+  // We should apply the positioning to the ghost canvas to allow dragging the whole widget visually
   const dynamicStyles = {
     '--glass-bg-opacity': glassOpacity,
     '--glass-blur-px': `${glassBlur}px`,
     '--accent-primary': accentColor,
+    position: 'absolute' as any,
     left: `${currentPos.x}px`,
     top: `${currentPos.y}px`,
   } as React.CSSProperties;
